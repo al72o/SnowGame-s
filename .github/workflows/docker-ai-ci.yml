@@ -1,6 +1,9 @@
 name: Docker AI deployment CI (WSL self-hosted)
 
 on:
+  push:
+    branches:
+      - feat/docker-domain-ai-agent
   pull_request:
     branches:
       - main
