@@ -107,3 +107,13 @@ snezhinka-ai/
 выводы и планы), построенный на логе решений, который игра ведёт
 автоматически по ходу партии. Подробности — в `AGENT.md`, задачи
 `debrief_facts` и `debrief_analysis`.
+
+
+## Docker + домен
+
+Production-подготовка находится в ветке `feat/docker-domain-ai-agent`.
+Она включает Docker, Caddy с автоматическим HTTPS, healthcheck, rate limit
+для AI endpoint и готовую конфигурацию для
+`https://ru.cheapvibecode.ru/v1` + `gpt-6-luna`.
+
+Полная инструкция: [DEPLOY.md](DEPLOY.md).
