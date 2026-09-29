@@ -34,6 +34,11 @@ jobs:
           node --check web/agent-client.js
           node --check web/game.js
 
+      - name: Check installer shell syntax
+        run: |
+          bash -n install.sh
+          bash -n scripts/live-ai-smoke.sh
+
       - name: Select isolated smoke-test port
         run: |
           SMOKE_PORT=$((20000 + GITHUB_RUN_ID % 20000))
