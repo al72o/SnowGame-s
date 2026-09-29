@@ -112,7 +112,7 @@ snezhinka-ai/
 ## Docker + домен
 
 Production-подготовка находится в ветке `feat/docker-domain-ai-agent`.
-Она включает Docker, Caddy с автоматическим HTTPS, healthcheck, rate limit
+Она включает Docker, интеграцию с существующим Nginx, обязательную авторизацию, healthcheck и rate limit
 для AI endpoint и готовую конфигурацию для
 `https://ru.cheapvibecode.ru/v1` + `gpt-6-luna`.
 
