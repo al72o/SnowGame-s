@@ -20,12 +20,91 @@ Docker: SnowGame-s
        model: gpt-6-luna
 ```
 
-Приложение **не публикует порт 3000 в интернет**: Docker привязывает его только к
-`127.0.0.1`. Публичной точкой остаётся установленный на сервере Nginx.
+Приложение **не публикует backend-порт в интернет**: Docker привязывает его только к
+`127.0.0.1` (по умолчанию `3000`, настраивается через `APP_BIND_PORT`). Публичной точкой остаётся установленный на сервере Nginx.
 
 Дополнительно сама игра защищена логином/паролем. После успешного входа сервер
 выдаёт подписанную `HttpOnly + Secure + SameSite=Lax` cookie-сессию.
 Без неё закрыты и интерфейс игры, и `/api/agent`.
+
+## Автоматическая установка
+
+После checkout ветки можно не собирать `.env`, Docker и Nginx вручную:
+
+```bash
+sudo bash install.sh
+```
+
+Установщик интерактивно запросит:
+
+- домен;
+- логин и пароль игры;
+- API key для `https://ru.cheapvibecode.ru/v1`;
+- email для Let's Encrypt.
+
+Он сам:
+
+- проверит/установит Docker, Docker Compose v2, Nginx и Certbot;
+- скопирует приложение в `/opt/snowgame`;
+- создаст `.env` с правами `600`;
+- сгенерирует новый `AUTH_SECRET`;
+- соберёт и запустит контейнер;
+- настроит host Nginx;
+- запросит HTTPS-сертификат;
+- выполнит один реальный smoke-запрос к `gpt-6-luna`.
+
+Пример без интерактивного ввода домена/email:
+
+```bash
+sudo bash install.sh \
+  --domain game.example.com \
+  --email admin@example.com
+```
+
+Если порт `3000` на сервере уже занят:
+
+```bash
+sudo bash install.sh --domain game.example.com --email admin@example.com --port 3100
+```
+
+Приложение всё равно публикуется только на loopback: `127.0.0.1:<порт>`.
+
+Для сервера, где сертификат настраивается отдельно:
+
+```bash
+sudo bash install.sh --domain game.example.com --skip-certbot
+```
+
+> При `--skip-certbot` production-cookie остаётся `Secure`. До настройки HTTPS вход через обычный HTTP использовать не следует.
+
+### Live-проверка AI после установки
+
+Один реальный запрос к модели:
+
+```bash
+cd /opt/snowgame
+sudo bash scripts/live-ai-smoke.sh
+```
+
+Полный acceptance всех пяти игровых AI-задач:
+
+```bash
+cd /opt/snowgame
+sudo bash scripts/live-ai-smoke.sh --full
+```
+
+Полный режим проверяет:
+
+1. `supplier_negotiate`;
+2. `buyer_decision`;
+3. `competitors`;
+4. `debrief_facts`;
+5. `debrief_analysis`.
+
+Тест проверяет, что внутри контейнера действительно настроены
+`gpt-6-luna` и `https://ru.cheapvibecode.ru/v1`, и валидирует форму ответа каждой роли.
+
+---
 
 ## 1. Получить ветку
 
