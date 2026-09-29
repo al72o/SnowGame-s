@@ -14,7 +14,7 @@ Nginx на хосте :80/:443
 127.0.0.1:3000
    │
    ▼
-Docker: SnowGame-s (Node cluster workers)
+Docker: SnowGame-s
    │
    └── https://ru.cheapvibecode.ru/v1
        model: gpt-6-luna
@@ -57,9 +57,6 @@ AUTH_USERNAME=admin
 AUTH_PASSWORD=ЗДЕСЬ_СИЛЬНЫЙ_ПАРОЛЬ
 AUTH_SECRET=ЗДЕСЬ_РЕЗУЛЬТАТ_openssl_rand_hex_32
 AUTH_COOKIE_SECURE=true
-
-# auto = до 4 worker-процессов по числу CPU; можно задать 8 и т.п.
-WEB_CONCURRENCY=auto
 
 AGENT_PROVIDER=openai
 OPENAI_API_KEY=ВАШ_API_КЛЮЧ
@@ -152,9 +149,8 @@ curl -I https://game.example.com/
 
 Должна появиться отдельная страница входа.
 
-После правильного логина открывается игра. Неверный пароль даёт 401.
-Перебор пароля ограничивает Nginx на маршруте /login; AI-запросы после авторизации
-искусственно не throttling'уются.
+После правильного логина открывается игра. Неверный пароль даёт 401, а после
+нескольких неудачных попыток с одного IP начинает действовать временный rate limit.
 
 ### Защита сейчас
 
@@ -165,8 +161,8 @@ curl -I https://game.example.com/
 - cookie подписана `AUTH_SECRET`;
 - cookie `HttpOnly`, `Secure`, `SameSite=Lax`;
 - сессия по умолчанию живёт 12 часов;
-- форма входа защищена Nginx limit_req;
-- `/api/agent` требует авторизацию, но не имеет искусственного лимита запросов;
+- форма входа ограничена по числу попыток;
+- `/api/agent` требует авторизацию и имеет отдельный rate limit;
 - API-ключ AI остаётся только в server-side `.env`;
 - публичный Nginx не отдаёт `/healthz`.
 
@@ -223,30 +219,16 @@ docker compose down
 `OPENAI_JSON_MODE=auto` повторяет JSON-запрос без этой опции.
 
 
-## Масштабирование worker-процессов
+## GitHub Actions через WSL self-hosted runner
 
-AI-вызовы выполняются асинхронно, поэтому один Node-процесс уже способен держать
-несколько одновременных запросов. Для изоляции и большего параллелизма production
-launcher использует Node cluster.
+CI этой ветки не использует GitHub-hosted минуты. Workflow запускается только на runner с метками:
 
-По умолчанию:
-
-```dotenv
-WEB_CONCURRENCY=auto
+```text
+self-hosted
+Linux
+X64
+snowgame-wsl
 ```
 
-`auto` запускает до 4 worker-процессов в одном контейнере. Если на сервере достаточно
-CPU/RAM, можно явно увеличить:
-
-```dotenv
-WEB_CONCURRENCY=8
-```
-
-После изменения:
-
-```bash
-docker compose up -d --build
-```
-
-Подписанная cookie-сессия не хранится в памяти worker-а, поэтому пользователь может
-попасть на любой worker без потери авторизации.
+Runner регистрируется для репозитория `al72o/SnowGame-s` и должен работать внутри WSL.
+Для полного CI на runner должны быть доступны `node`, `curl`, `docker` и `docker compose`.
