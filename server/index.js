@@ -3,7 +3,7 @@
 // - serves the static browser game;
 // - protects the game and AI gateway with signed cookie authentication;
 // - keeps provider keys out of the browser;
-// - provides health checks while Nginx handles login brute-force protection.
+// - provides health checks and per-IP rate limits.
 // -----------------------------------------------------------------------------
 
 const crypto = require('crypto');
@@ -19,15 +19,17 @@ const PORT = Number.parseInt(process.env.PORT || '3000', 10);
 const HOST = process.env.HOST || '0.0.0.0';
 const TRUST_PROXY_HOPS = Number.parseInt(process.env.TRUST_PROXY_HOPS || '1', 10);
 
-const AUTH_ENABLED =
-  process.env.AUTH_ENABLED == null
-    ? process.env.NODE_ENV === 'production'
-    : String(process.env.AUTH_ENABLED).toLowerCase() !== 'false';
+const AUTH_ENABLED = String(process.env.AUTH_ENABLED || 'true').toLowerCase() !== 'false';
 const AUTH_USERNAME = process.env.AUTH_USERNAME || 'admin';
 const AUTH_PASSWORD = process.env.AUTH_PASSWORD || '';
 const AUTH_SECRET = process.env.AUTH_SECRET || '';
 const AUTH_SESSION_HOURS = Number.parseInt(process.env.AUTH_SESSION_HOURS || '12', 10);
 const AUTH_COOKIE_SECURE = String(process.env.AUTH_COOKIE_SECURE || 'true').toLowerCase() !== 'false';
+
+const LOGIN_RATE_LIMIT_WINDOW_MS = Number.parseInt(process.env.LOGIN_RATE_LIMIT_WINDOW_MS || '900000', 10);
+const LOGIN_RATE_LIMIT_MAX = Number.parseInt(process.env.LOGIN_RATE_LIMIT_MAX || '10', 10);
+const AGENT_RATE_LIMIT_WINDOW_MS = Number.parseInt(process.env.AGENT_RATE_LIMIT_WINDOW_MS || '60000', 10);
+const AGENT_RATE_LIMIT_MAX = Number.parseInt(process.env.AGENT_RATE_LIMIT_MAX || '60', 10);
 
 if (AUTH_ENABLED) {
   if (!AUTH_PASSWORD) {
@@ -42,6 +44,56 @@ app.disable('x-powered-by');
 app.set('trust proxy', Number.isFinite(TRUST_PROXY_HOPS) ? TRUST_PROXY_HOPS : 1);
 app.use(express.json({ limit: '256kb' }));
 app.use(express.urlencoded({ extended: false, limit: '16kb' }));
+
+const agentBuckets = new Map();
+const loginBuckets = new Map();
+
+function clientKey(req) {
+  return req.ip || req.socket.remoteAddress || 'unknown';
+}
+
+function rateLimit(store, windowMs, max, message) {
+  return (req, res, next) => {
+    const now = Date.now();
+    const key = clientKey(req);
+    let bucket = store.get(key);
+
+    if (!bucket || now >= bucket.resetAt) {
+      bucket = { count: 0, resetAt: now + windowMs };
+      store.set(key, bucket);
+    }
+
+    bucket.count += 1;
+
+    if (bucket.count > max) {
+      const retryAfter = Math.max(1, Math.ceil((bucket.resetAt - now) / 1000));
+      res.setHeader('Retry-After', String(retryAfter));
+      return res.status(429).send(message);
+    }
+
+    if (store.size > 10000) {
+      for (const [ip, value] of store) {
+        if (now >= value.resetAt) store.delete(ip);
+      }
+    }
+
+    next();
+  };
+}
+
+const loginRateLimit = rateLimit(
+  loginBuckets,
+  LOGIN_RATE_LIMIT_WINDOW_MS,
+  LOGIN_RATE_LIMIT_MAX,
+  'Слишком много попыток входа. Попробуйте позже.'
+);
+
+const agentRateLimit = rateLimit(
+  agentBuckets,
+  AGENT_RATE_LIMIT_WINDOW_MS,
+  AGENT_RATE_LIMIT_MAX,
+  'Слишком много запросов к AI. Повторите попытку позже.'
+);
 
 function hash(value) {
   return crypto.createHash('sha256').update(String(value)).digest();
@@ -213,7 +265,7 @@ app.get('/login', (req, res) => {
   res.type('html').send(loginPage());
 });
 
-app.post('/login', (req, res) => {
+app.post('/login', loginRateLimit, (req, res) => {
   if (!AUTH_ENABLED) return res.redirect(302, '/');
 
   const username = String(req.body?.username || '');
@@ -223,6 +275,8 @@ app.post('/login', (req, res) => {
     res.setHeader('Cache-Control', 'no-store');
     return res.status(401).type('html').send(loginPage('Неверный логин или пароль.'));
   }
+
+  loginBuckets.delete(clientKey(req));
 
   const ttlSeconds = Math.max(1, AUTH_SESSION_HOURS) * 60 * 60;
   const expiresAt = Date.now() + ttlSeconds * 1000;
@@ -246,7 +300,7 @@ app.get('/api/agent/health', (req, res) => {
   });
 });
 
-app.post('/api/agent', async (req, res) => {
+app.post('/api/agent', agentRateLimit, async (req, res) => {
   const { task, input } = req.body || {};
 
   if (!task || typeof task !== 'string') {
