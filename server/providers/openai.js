@@ -12,7 +12,13 @@
 // см. AGENT.md в корне проекта.
 // -----------------------------------------------------------------------------
 
-const BASE_URL = (process.env.OPENAI_BASE_URL || 'https://api.openai.com/v1').replace(/\\/+$/, '');
+function normalizeBaseUrl(value) {
+  let normalized = value;
+  while (normalized.endsWith('/')) normalized = normalized.slice(0, -1);
+  return normalized;
+}
+
+const BASE_URL = normalizeBaseUrl(process.env.OPENAI_BASE_URL || 'https://api.openai.com/v1');
 const MODEL = process.env.OPENAI_MODEL || 'gpt-4o-mini';
 const API_KEY = process.env.OPENAI_API_KEY || '';
 const REQUEST_TIMEOUT_MS = Number.parseInt(process.env.OPENAI_REQUEST_TIMEOUT_MS || '45000', 10);
@@ -92,25 +98,35 @@ async function chat(messages, { json = false } = {}) {
 }
 
 function parseJsonObject(content) {
-  try {
-    return JSON.parse(content);
-  } catch (_) {
-    const withoutFence = content
-      .replace(/^\`\`\`(?:json)?\\s*/i, '')
-      .replace(/\\s*\`\`\`$/i, '')
-      .trim();
+  const trimmed = content.trim();
+  const candidates = [trimmed];
 
+  if (trimmed.startsWith('```')) {
+    const firstLineEnd = trimmed.indexOf('\n');
+    let fenced = firstLineEnd >= 0 ? trimmed.slice(firstLineEnd + 1) : trimmed.slice(3);
+    if (fenced.endsWith('```')) fenced = fenced.slice(0, -3);
+    candidates.push(fenced.trim());
+  }
+
+  for (const candidate of candidates) {
     try {
-      return JSON.parse(withoutFence);
+      return JSON.parse(candidate);
     } catch (_) {
-      const start = withoutFence.indexOf('{');
-      const end = withoutFence.lastIndexOf('}');
-      if (start >= 0 && end > start) {
-        return JSON.parse(withoutFence.slice(start, end + 1));
-      }
-      throw new Error('Модель вернула невалидный JSON');
+      // Пробуем следующий безопасный вариант ниже.
     }
   }
+
+  const start = trimmed.indexOf('{');
+  const end = trimmed.lastIndexOf('}');
+  if (start >= 0 && end > start) {
+    try {
+      return JSON.parse(trimmed.slice(start, end + 1));
+    } catch (_) {
+      // Переходим к понятной ошибке ниже.
+    }
+  }
+
+  throw new Error('Модель вернула невалидный JSON');
 }
 
 async function chatJson(prompt) {
