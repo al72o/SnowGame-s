@@ -14,7 +14,7 @@ Nginx на хосте :80/:443
 127.0.0.1:3000
    │
    ▼
-Docker: SnowGame-s
+Docker: SnowGame-s (Node cluster workers)
    │
    └── https://ru.cheapvibecode.ru/v1
        model: gpt-6-luna
@@ -57,6 +57,9 @@ AUTH_USERNAME=admin
 AUTH_PASSWORD=ЗДЕСЬ_СИЛЬНЫЙ_ПАРОЛЬ
 AUTH_SECRET=ЗДЕСЬ_РЕЗУЛЬТАТ_openssl_rand_hex_32
 AUTH_COOKIE_SECURE=true
+
+# auto = до 4 worker-процессов по числу CPU; можно задать 8 и т.п.
+WEB_CONCURRENCY=auto
 
 AGENT_PROVIDER=openai
 OPENAI_API_KEY=ВАШ_API_КЛЮЧ
@@ -149,8 +152,9 @@ curl -I https://game.example.com/
 
 Должна появиться отдельная страница входа.
 
-После правильного логина открывается игра. Неверный пароль даёт 401, а после
-нескольких неудачных попыток с одного IP начинает действовать временный rate limit.
+После правильного логина открывается игра. Неверный пароль даёт 401.
+Перебор пароля ограничивает Nginx на маршруте /login; AI-запросы после авторизации
+искусственно не throttling'уются.
 
 ### Защита сейчас
 
@@ -161,8 +165,8 @@ curl -I https://game.example.com/
 - cookie подписана `AUTH_SECRET`;
 - cookie `HttpOnly`, `Secure`, `SameSite=Lax`;
 - сессия по умолчанию живёт 12 часов;
-- форма входа ограничена по числу попыток;
-- `/api/agent` требует авторизацию и имеет отдельный rate limit;
+- форма входа защищена Nginx limit_req;
+- `/api/agent` требует авторизацию, но не имеет искусственного лимита запросов;
 - API-ключ AI остаётся только в server-side `.env`;
 - публичный Nginx не отдаёт `/healthz`.
 
@@ -217,3 +221,32 @@ docker compose down
 
 Для шлюзов, которые не принимают `response_format`, режим
 `OPENAI_JSON_MODE=auto` повторяет JSON-запрос без этой опции.
+
+
+## Масштабирование worker-процессов
+
+AI-вызовы выполняются асинхронно, поэтому один Node-процесс уже способен держать
+несколько одновременных запросов. Для изоляции и большего параллелизма production
+launcher использует Node cluster.
+
+По умолчанию:
+
+```dotenv
+WEB_CONCURRENCY=auto
+```
+
+`auto` запускает до 4 worker-процессов в одном контейнере. Если на сервере достаточно
+CPU/RAM, можно явно увеличить:
+
+```dotenv
+WEB_CONCURRENCY=8
+```
+
+После изменения:
+
+```bash
+docker compose up -d --build
+```
+
+Подписанная cookie-сессия не хранится в памяти worker-а, поэтому пользователь может
+попасть на любой worker без потери авторизации.
