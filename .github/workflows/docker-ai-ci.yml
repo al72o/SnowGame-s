@@ -1,0 +1,80 @@
+name: Docker AI deployment CI
+
+on:
+  push:
+    branches:
+      - feat/docker-domain-ai-agent
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install dependencies
+        run: npm install --no-audit --no-fund
+
+      - name: Check Node.js syntax
+        run: |
+          node --check server/index.js
+          node --check server/providers/index.js
+          node --check server/providers/openai.js
+          node --check server/providers/stub.js
+          node --check web/agent-client.js
+          node --check web/game.js
+
+      - name: Start server in stub mode
+        env:
+          AGENT_PROVIDER: stub
+          HOST: 127.0.0.1
+          PORT: 3000
+        run: |
+          npm start > /tmp/snezhinka.log 2>&1 &
+          echo $! > /tmp/snezhinka.pid
+          for i in {1..20}; do
+            if curl -fsS http://127.0.0.1:3000/healthz >/dev/null; then
+              exit 0
+            fi
+            sleep 0.5
+          done
+          cat /tmp/snezhinka.log
+          exit 1
+
+      - name: Check health endpoints
+        run: |
+          curl -fsS http://127.0.0.1:3000/healthz
+          curl -fsS http://127.0.0.1:3000/api/agent/health
+
+      - name: Stop smoke server
+        if: always()
+        run: |
+          if [ -f /tmp/snezhinka.pid ]; then
+            kill "$(cat /tmp/snezhinka.pid)" || true
+          fi
+
+      - name: Validate Compose
+        run: |
+          cp .env.example .env
+          docker compose config >/dev/null
+
+      - name: Validate Caddyfile
+        run: |
+          docker run --rm \
+            -e DOMAIN=game.example.com \
+            -v "$PWD/Caddyfile:/etc/caddy/Caddyfile:ro" \
+            caddy:2-alpine \
+            caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
+
+      - name: Build application image
+        run: docker build -t snezhinka-ai:ci .
