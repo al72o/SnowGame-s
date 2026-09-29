@@ -39,6 +39,11 @@ jobs:
           AGENT_PROVIDER: stub
           HOST: 127.0.0.1
           PORT: 3000
+          AUTH_ENABLED: "true"
+          AUTH_USERNAME: ci-user
+          AUTH_PASSWORD: ci-password-strong
+          AUTH_SECRET: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+          AUTH_COOKIE_SECURE: "false"
         run: |
           npm start > /tmp/snezhinka.log 2>&1 &
           echo $! > /tmp/snezhinka.pid
@@ -51,10 +56,19 @@ jobs:
           cat /tmp/snezhinka.log
           exit 1
 
-      - name: Check health endpoints
+      - name: Check health and authentication
         run: |
           curl -fsS http://127.0.0.1:3000/healthz
-          curl -fsS http://127.0.0.1:3000/api/agent/health
+
+          test "$(curl -sS -o /dev/null -w '%{http_code}' http://127.0.0.1:3000/)" = "302"
+          test "$(curl -sS -o /dev/null -w '%{http_code}' http://127.0.0.1:3000/api/agent/health)" = "401"
+
+          test "$(curl -sS -o /dev/null -w '%{http_code}'             -d 'username=ci-user&password=wrong'             http://127.0.0.1:3000/login)" = "401"
+
+          curl -sS -c /tmp/snowgame-cookies.txt             -d 'username=ci-user&password=ci-password-strong'             -o /dev/null             http://127.0.0.1:3000/login
+
+          curl -fsS -b /tmp/snowgame-cookies.txt http://127.0.0.1:3000/
+          curl -fsS -b /tmp/snowgame-cookies.txt http://127.0.0.1:3000/api/agent/health
 
       - name: Stop smoke server
         if: always()
@@ -68,13 +82,9 @@ jobs:
           cp .env.example .env
           docker compose config >/dev/null
 
-      - name: Validate Caddyfile
+      - name: Validate Nginx proxy config
         run: |
-          docker run --rm \
-            -e DOMAIN=game.example.com \
-            -v "$PWD/Caddyfile:/etc/caddy/Caddyfile:ro" \
-            caddy:2-alpine \
-            caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
+          docker run --rm             --add-host=host.docker.internal:host-gateway             -v "$PWD/deploy/nginx-snowgame.conf.example:/etc/nginx/conf.d/default.conf:ro"             nginx:1.27-alpine             nginx -t
 
       - name: Build application image
         run: docker build -t snezhinka-ai:ci .
