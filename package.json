@@ -3,9 +3,9 @@
   "version": "0.1.0",
   "private": true,
   "description": "Личный прототип цифровой версии деловой игры РРС «Снежинка» — экономика игры + подключаемый AI-агент вместо живых ведущих и оппонентов.",
-  "main": "server/index.js",
+  "main": "server/cluster.js",
   "scripts": {
-    "start": "node server/index.js",
+    "start": "node server/cluster.js",
     "dev": "node --watch server/index.js"
   },
   "engines": {
