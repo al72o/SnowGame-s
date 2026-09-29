@@ -43,6 +43,13 @@ jobs:
           bash -n install.sh
           bash -n scripts/live-ai-smoke.sh
 
+      - name: Check game-flow dashboard
+        run: |
+          test -s web/game-flow-dashboard.html
+          grep -q 'id="loop"' web/game-flow-dashboard.html
+          grep -q 'id="quarters"' web/game-flow-dashboard.html
+          grep -q 'id="gaps"' web/game-flow-dashboard.html
+
       - name: Select isolated smoke-test port
         run: |
           SMOKE_PORT=$((20000 + GITHUB_RUN_ID % 20000))
