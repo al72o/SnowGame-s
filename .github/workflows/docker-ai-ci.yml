@@ -34,11 +34,17 @@ jobs:
           node --check web/agent-client.js
           node --check web/game.js
 
+      - name: Select isolated smoke-test port
+        run: |
+          SMOKE_PORT=$((20000 + GITHUB_RUN_ID % 20000))
+          echo "SMOKE_PORT=$SMOKE_PORT" >> "$GITHUB_ENV"
+          echo "Using smoke-test port: $SMOKE_PORT"
+
       - name: Start server in stub mode
         env:
           AGENT_PROVIDER: stub
           HOST: 127.0.0.1
-          PORT: 3000
+          PORT: ${{ env.SMOKE_PORT }}
           AUTH_ENABLED: "true"
           AUTH_USERNAME: ci-user
           AUTH_PASSWORD: ci-password-strong
@@ -48,7 +54,7 @@ jobs:
           npm start > /tmp/snezhinka.log 2>&1 &
           echo $! > /tmp/snezhinka.pid
           for i in {1..20}; do
-            if curl -fsS http://127.0.0.1:3000/healthz >/dev/null; then
+            if curl -fsS http://127.0.0.1:${SMOKE_PORT}/healthz >/dev/null; then
               exit 0
             fi
             sleep 0.5
@@ -58,17 +64,17 @@ jobs:
 
       - name: Check health and authentication
         run: |
-          curl -fsS http://127.0.0.1:3000/healthz
+          curl -fsS http://127.0.0.1:${SMOKE_PORT}/healthz
 
-          test "$(curl -sS -o /dev/null -w '%{http_code}' http://127.0.0.1:3000/)" = "302"
-          test "$(curl -sS -o /dev/null -w '%{http_code}' http://127.0.0.1:3000/api/agent/health)" = "401"
+          test "$(curl -sS -o /dev/null -w '%{http_code}' http://127.0.0.1:${SMOKE_PORT}/)" = "302"
+          test "$(curl -sS -o /dev/null -w '%{http_code}' http://127.0.0.1:${SMOKE_PORT}/api/agent/health)" = "401"
 
-          test "$(curl -sS -o /dev/null -w '%{http_code}'             -d 'username=ci-user&password=wrong'             http://127.0.0.1:3000/login)" = "401"
+          test "$(curl -sS -o /dev/null -w '%{http_code}'             -d 'username=ci-user&password=wrong'             http://127.0.0.1:${SMOKE_PORT}/login)" = "401"
 
-          curl -sS -c /tmp/snowgame-cookies.txt             -d 'username=ci-user&password=ci-password-strong'             -o /dev/null             http://127.0.0.1:3000/login
+          curl -sS -c /tmp/snowgame-cookies.txt             -d 'username=ci-user&password=ci-password-strong'             -o /dev/null             http://127.0.0.1:${SMOKE_PORT}/login
 
-          curl -fsS -b /tmp/snowgame-cookies.txt http://127.0.0.1:3000/
-          curl -fsS -b /tmp/snowgame-cookies.txt http://127.0.0.1:3000/api/agent/health
+          curl -fsS -b /tmp/snowgame-cookies.txt http://127.0.0.1:${SMOKE_PORT}/
+          curl -fsS -b /tmp/snowgame-cookies.txt http://127.0.0.1:${SMOKE_PORT}/api/agent/health
 
       - name: Stop smoke server
         if: always()
