@@ -1,0 +1,112 @@
+name: Docker AI deployment CI (WSL self-hosted)
+
+on:
+  push:
+    branches:
+      - feat/docker-domain-ai-agent
+  pull_request:
+    branches:
+      - main
+
+concurrency:
+  group: snowgame-ci
+  cancel-in-progress: true
+
+jobs:
+  smoke:
+    runs-on: [self-hosted, Linux, X64, snowgame-wsl]
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install dependencies
+        run: npm install --no-audit --no-fund
+
+      - name: Check Node.js syntax
+        run: |
+          node --check server/index.js
+          node --check server/providers/index.js
+          node --check server/providers/openai.js
+          node --check server/providers/stub.js
+          node --check web/agent-client.js
+          node --check web/game.js
+
+      - name: Check installer shell syntax
+        run: |
+          bash -n install.sh
+          bash -n scripts/live-ai-smoke.sh
+
+      - name: Check game-flow dashboard
+        run: |
+          test -s web/game-flow-dashboard.html
+          grep -q 'id="loop"' web/game-flow-dashboard.html
+          grep -q 'id="quarters"' web/game-flow-dashboard.html
+          grep -q 'id="gaps"' web/game-flow-dashboard.html
+
+      - name: Select isolated smoke-test port
+        run: |
+          SMOKE_PORT=$((20000 + GITHUB_RUN_ID % 20000))
+          echo "SMOKE_PORT=$SMOKE_PORT" >> "$GITHUB_ENV"
+          echo "Using smoke-test port: $SMOKE_PORT"
+
+      - name: Start server in stub mode
+        env:
+          AGENT_PROVIDER: stub
+          HOST: 127.0.0.1
+          PORT: ${{ env.SMOKE_PORT }}
+          AUTH_ENABLED: "true"
+          AUTH_USERNAME: ci-user
+          AUTH_PASSWORD: ci-password-strong
+          AUTH_SECRET: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+          AUTH_COOKIE_SECURE: "false"
+        run: |
+          npm start > /tmp/snezhinka.log 2>&1 &
+          echo $! > /tmp/snezhinka.pid
+          for i in {1..20}; do
+            if curl -fsS http://127.0.0.1:${SMOKE_PORT}/healthz >/dev/null; then
+              exit 0
+            fi
+            sleep 0.5
+          done
+          cat /tmp/snezhinka.log
+          exit 1
+
+      - name: Check health and authentication
+        run: |
+          curl -fsS http://127.0.0.1:${SMOKE_PORT}/healthz
+
+          test "$(curl -sS -o /dev/null -w '%{http_code}' http://127.0.0.1:${SMOKE_PORT}/)" = "302"
+          test "$(curl -sS -o /dev/null -w '%{http_code}' http://127.0.0.1:${SMOKE_PORT}/api/agent/health)" = "401"
+
+          test "$(curl -sS -o /dev/null -w '%{http_code}'             -d 'username=ci-user&password=wrong'             http://127.0.0.1:${SMOKE_PORT}/login)" = "401"
+
+          curl -sS -c /tmp/snowgame-cookies.txt             -d 'username=ci-user&password=ci-password-strong'             -o /dev/null             http://127.0.0.1:${SMOKE_PORT}/login
+
+          curl -fsS -b /tmp/snowgame-cookies.txt http://127.0.0.1:${SMOKE_PORT}/
+          curl -fsS -b /tmp/snowgame-cookies.txt http://127.0.0.1:${SMOKE_PORT}/api/agent/health
+
+      - name: Stop smoke server
+        if: always()
+        run: |
+          if [ -f /tmp/snezhinka.pid ]; then
+            kill "$(cat /tmp/snezhinka.pid)" || true
+          fi
+
+      - name: Validate Compose
+        run: |
+          cp .env.example .env
+          docker compose config >/dev/null
+
+      - name: Validate Nginx proxy config
+        run: |
+          docker run --rm             --add-host=host.docker.internal:host-gateway             -v "$PWD/deploy/nginx-snowgame.conf.example:/etc/nginx/conf.d/default.conf:ro"             nginx:1.27-alpine             nginx -t
+
+      - name: Build application image
+        run: docker build -t snezhinka-ai:ci .

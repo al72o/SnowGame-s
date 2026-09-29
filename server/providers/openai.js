@@ -12,35 +12,121 @@
 // см. AGENT.md в корне проекта.
 // -----------------------------------------------------------------------------
 
-const BASE_URL = process.env.OPENAI_BASE_URL || 'https://api.openai.com/v1';
+function normalizeBaseUrl(value) {
+  let normalized = value;
+  while (normalized.endsWith('/')) normalized = normalized.slice(0, -1);
+  return normalized;
+}
+
+const BASE_URL = normalizeBaseUrl(process.env.OPENAI_BASE_URL || 'https://api.openai.com/v1');
 const MODEL = process.env.OPENAI_MODEL || 'gpt-4o-mini';
 const API_KEY = process.env.OPENAI_API_KEY || '';
+const REQUEST_TIMEOUT_MS = Number.parseInt(process.env.OPENAI_REQUEST_TIMEOUT_MS || '45000', 10);
+const JSON_MODE = (process.env.OPENAI_JSON_MODE || 'auto').toLowerCase();
+const TEMPERATURE = Number.parseFloat(process.env.OPENAI_TEMPERATURE || '0.7');
+
+async function requestChat(messages, { useResponseFormat = false } = {}) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+
+  try {
+    return await fetch(`${BASE_URL}/chat/completions`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${API_KEY}`,
+      },
+      signal: controller.signal,
+      body: JSON.stringify({
+        model: MODEL,
+        messages,
+        temperature: Number.isFinite(TEMPERATURE) ? TEMPERATURE : 0.7,
+        ...(useResponseFormat ? { response_format: { type: 'json_object' } } : {}),
+      }),
+    });
+  } catch (error) {
+    if (error && error.name === 'AbortError') {
+      throw new Error(`AI API не ответил за ${REQUEST_TIMEOUT_MS} мс`);
+    }
+    throw error;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function readContent(res) {
+  if (!res.ok) {
+    const text = await res.text().catch(() => '');
+    throw new Error(`OpenAI-совместимый API ответил ${res.status}: ${text.slice(0, 300)}`);
+  }
+
+  const data = await res.json();
+  let content = data?.choices?.[0]?.message?.content;
+
+  if (Array.isArray(content)) {
+    content = content
+      .map((part) => (typeof part === 'string' ? part : part?.text || ''))
+      .join('');
+  }
+
+  if (typeof content !== 'string' || !content.trim()) {
+    throw new Error('Пустой ответ модели');
+  }
+
+  return content.trim();
+}
 
 async function chat(messages, { json = false } = {}) {
   if (!API_KEY) {
     throw new Error('OPENAI_API_KEY не задан (см. .env.example)');
   }
-  const res = await fetch(`${BASE_URL}/chat/completions`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${API_KEY}`,
-    },
-    body: JSON.stringify({
-      model: MODEL,
-      messages,
-      temperature: 0.7,
-      ...(json ? { response_format: { type: 'json_object' } } : {}),
-    }),
-  });
-  if (!res.ok) {
-    const text = await res.text().catch(() => '');
-    throw new Error(`OpenAI-совместимый API ответил ${res.status}: ${text.slice(0, 300)}`);
+
+  const wantsResponseFormat = json && JSON_MODE !== 'off';
+  let res = await requestChat(messages, { useResponseFormat: wantsResponseFormat });
+
+  if (
+    wantsResponseFormat &&
+    JSON_MODE === 'auto' &&
+    (res.status === 400 || res.status === 422)
+  ) {
+    // Не все OpenAI-compatible прокси/модели поддерживают response_format.
+    // В auto-режиме повторяем тот же запрос без этой опции.
+    res = await requestChat(messages, { useResponseFormat: false });
   }
-  const data = await res.json();
-  const content = data?.choices?.[0]?.message?.content;
-  if (!content) throw new Error('Пустой ответ модели');
-  return content;
+
+  return readContent(res);
+}
+
+function parseJsonObject(content) {
+  const trimmed = content.trim();
+  const candidates = [trimmed];
+
+  if (trimmed.startsWith('```')) {
+    const firstLineEnd = trimmed.indexOf('\n');
+    let fenced = firstLineEnd >= 0 ? trimmed.slice(firstLineEnd + 1) : trimmed.slice(3);
+    if (fenced.endsWith('```')) fenced = fenced.slice(0, -3);
+    candidates.push(fenced.trim());
+  }
+
+  for (const candidate of candidates) {
+    try {
+      return JSON.parse(candidate);
+    } catch (_) {
+      // Пробуем следующий безопасный вариант ниже.
+    }
+  }
+
+  const start = trimmed.indexOf('{');
+  const end = trimmed.lastIndexOf('}');
+  if (start >= 0 && end > start) {
+    try {
+      return JSON.parse(trimmed.slice(start, end + 1));
+    } catch (_) {
+      // Переходим к понятной ошибке ниже.
+    }
+  }
+
+  throw new Error('Модель вернула невалидный JSON');
 }
 
 async function chatJson(prompt) {
@@ -51,7 +137,7 @@ async function chatJson(prompt) {
     ],
     { json: true }
   );
-  return JSON.parse(content);
+  return parseJsonObject(content);
 }
 
 async function chatText(prompt) {
@@ -126,4 +212,14 @@ ${addedFacts ? 'Дополнение участника к фактам: ' + add
   return { text };
 }
 
-module.exports = { run };
+function info() {
+  return {
+    model: MODEL,
+    baseUrl: BASE_URL,
+    configured: Boolean(API_KEY),
+    timeoutMs: REQUEST_TIMEOUT_MS,
+    jsonMode: JSON_MODE,
+  };
+}
+
+module.exports = { run, info };
