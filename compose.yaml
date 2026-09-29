@@ -10,8 +10,8 @@ services:
       NODE_ENV: production
       HOST: 0.0.0.0
       PORT: 3000
-    expose:
-      - "3000"
+    ports:
+      - "127.0.0.1:3000:3000"
     read_only: true
     tmpfs:
       - /tmp
@@ -29,24 +29,3 @@ services:
       timeout: 5s
       start_period: 10s
       retries: 3
-
-  caddy:
-    image: caddy:2-alpine
-    restart: unless-stopped
-    depends_on:
-      app:
-        condition: service_healthy
-    environment:
-      DOMAIN: ${DOMAIN:?Set DOMAIN in .env}
-    ports:
-      - "80:80"
-      - "443:443"
-      - "443:443/udp"
-    volumes:
-      - ./Caddyfile:/etc/caddy/Caddyfile:ro
-      - caddy_data:/data
-      - caddy_config:/config
-
-volumes:
-  caddy_data:
-  caddy_config:
