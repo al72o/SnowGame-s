@@ -116,4 +116,23 @@ Production-подготовка находится в ветке `feat/docker-do
 для AI endpoint и готовую конфигурацию для
 `https://ru.cheapvibecode.ru/v1` + `gpt-6-luna`.
 
+Автоматическая установка после checkout:
+
+```bash
+sudo bash install.sh
+```
+
+После установки быстрый реальный тест модели:
+
+```bash
+cd /opt/snowgame
+sudo bash scripts/live-ai-smoke.sh
+```
+
+Полный тест всех пяти AI-ролей:
+
+```bash
+sudo bash scripts/live-ai-smoke.sh --full
+```
+
 Полная инструкция: [DEPLOY.md](DEPLOY.md).
