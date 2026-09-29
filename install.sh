@@ -290,7 +290,9 @@ if [[ -f "$NGINX_SITE" ]]; then
   cp -a "$NGINX_SITE" "${NGINX_SITE}.bak.$(date +%Y%m%d-%H%M%S)"
 fi
 
-sed "s/server_name game\.example\.com;/server_name $DOMAIN;/" \
+sed \
+  -e "s/server_name game\\.example\\.com;/server_name $DOMAIN;/" \
+  -e "s#proxy_pass http://127\\.0\\.0\\.1:3000;#proxy_pass http://127.0.0.1:${APP_BIND_PORT};#" \
   "$INSTALL_DIR/deploy/nginx-snowgame.conf.example" > "$NGINX_SITE"
 
 ln -sfn "$NGINX_SITE" "$NGINX_ENABLED"
