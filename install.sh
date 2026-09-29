@@ -10,6 +10,7 @@ EMAIL="${EMAIL:-}"
 AUTH_USERNAME="${AUTH_USERNAME:-admin}"
 AUTH_PASSWORD="${AUTH_PASSWORD:-}"
 OPENAI_API_KEY="${OPENAI_API_KEY:-}"
+APP_BIND_PORT="${APP_BIND_PORT:-3000}"
 SKIP_CERTBOT=false
 SKIP_AI_TEST=false
 SKIP_PACKAGES=false
@@ -19,13 +20,14 @@ usage() {
 SnowGame-s production installer
 
 Запуск:
-  sudo ./install.sh [опции]
+  sudo bash install.sh [опции]
 
 Опции:
   --domain DOMAIN         Домен игры, например snowgame.example.com
   --email EMAIL           Email для Let's Encrypt / Certbot
   --install-dir PATH      Каталог установки (по умолчанию /opt/snowgame)
   --auth-user USER        Логин игры (по умолчанию admin)
+  --port PORT             Локальный порт приложения (по умолчанию 3000)
   --skip-certbot          Не получать HTTPS-сертификат автоматически
   --skip-ai-test          Не выполнять live-запрос к gpt-6-luna после запуска
   --skip-packages         Не устанавливать системные пакеты
@@ -57,6 +59,10 @@ while [[ $# -gt 0 ]]; do
       AUTH_USERNAME="${2:-}"
       shift 2
       ;;
+    --port)
+      APP_BIND_PORT="${2:-}"
+      shift 2
+      ;;
     --skip-certbot)
       SKIP_CERTBOT=true
       shift
@@ -82,7 +88,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 if [[ "${EUID}" -ne 0 ]]; then
-  echo "Запусти установщик через sudo: sudo ./install.sh" >&2
+  echo "Запусти установщик через sudo: sudo bash install.sh" >&2
   exit 1
 fi
 
@@ -92,6 +98,11 @@ fi
 
 if [[ ! "$DOMAIN" =~ ^([A-Za-z0-9-]+\.)+[A-Za-z]{2,}$ ]]; then
   echo "Некорректный домен: $DOMAIN" >&2
+  exit 1
+fi
+
+if [[ ! "$APP_BIND_PORT" =~ ^[0-9]+$ ]] || (( APP_BIND_PORT < 1024 || APP_BIND_PORT > 65535 )); then
+  echo "Некорректный локальный порт: $APP_BIND_PORT" >&2
   exit 1
 fi
 
@@ -148,6 +159,7 @@ echo "=== SnowGame-s production install ==="
 echo "Домен:       $DOMAIN"
 echo "Каталог:     $INSTALL_DIR"
 echo "Логин:       $AUTH_USERNAME"
+echo "Local port:  $APP_BIND_PORT"
 echo "AI endpoint: https://ru.cheapvibecode.ru/v1"
 echo "AI model:    gpt-6-luna"
 echo
@@ -219,6 +231,7 @@ DOMAIN="$(dotenv_escape "$DOMAIN")"
 
 HOST=0.0.0.0
 PORT=3000
+APP_BIND_PORT=$APP_BIND_PORT
 NODE_ENV=production
 
 AUTH_ENABLED=true
@@ -256,7 +269,7 @@ docker compose up -d --build --remove-orphans
 echo "==> Ожидание healthcheck приложения"
 healthy=false
 for _ in {1..60}; do
-  if curl -fsS http://127.0.0.1:3000/healthz >/dev/null 2>&1; then
+  if curl -fsS "http://127.0.0.1:${APP_BIND_PORT}/healthz" >/dev/null 2>&1; then
     healthy=true
     break
   fi
@@ -310,7 +323,7 @@ fi
 
 if ! $SKIP_AI_TEST; then
   echo "==> Live smoke-test gpt-6-luna"
-  if ! bash "$INSTALL_DIR/scripts/live-ai-smoke.sh" --project-dir "$INSTALL_DIR"; then
+  if ! APP_BIND_PORT="$APP_BIND_PORT" bash "$INSTALL_DIR/scripts/live-ai-smoke.sh" --project-dir "$INSTALL_DIR"; then
     echo "⚠️ Приложение запущено, но live AI smoke-test не прошёл." >&2
     echo "Смотри диагностику выше; установка Docker/Nginx сохранена." >&2
   fi
@@ -319,7 +332,7 @@ fi
 echo
 echo "✅ SnowGame-s установлен"
 echo "Каталог: $INSTALL_DIR"
-echo "Локальный healthcheck: http://127.0.0.1:3000/healthz"
+echo "Локальный healthcheck: http://127.0.0.1:${APP_BIND_PORT}/healthz"
 if $TLS_OK; then
   echo "Открыть: https://$DOMAIN"
 elif $SKIP_CERTBOT; then
