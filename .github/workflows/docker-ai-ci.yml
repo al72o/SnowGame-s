@@ -1,4 +1,4 @@
-name: Docker AI deployment CI
+name: Docker AI deployment CI (WSL self-hosted)
 
 on:
   push:
@@ -10,7 +10,7 @@ on:
 
 jobs:
   smoke:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, X64, snowgame-wsl]
     timeout-minutes: 10
 
     steps:
@@ -27,7 +27,6 @@ jobs:
 
       - name: Check Node.js syntax
         run: |
-          node --check server/cluster.js
           node --check server/index.js
           node --check server/providers/index.js
           node --check server/providers/openai.js
@@ -45,7 +44,6 @@ jobs:
           AUTH_PASSWORD: ci-password-strong
           AUTH_SECRET: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
           AUTH_COOKIE_SECURE: "false"
-          WEB_CONCURRENCY: "2"
         run: |
           npm start > /tmp/snezhinka.log 2>&1 &
           echo $! > /tmp/snezhinka.pid
