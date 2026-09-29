@@ -11,7 +11,7 @@ services:
       HOST: 0.0.0.0
       PORT: 3000
     ports:
-      - "127.0.0.1:3000:3000"
+      - "127.0.0.1:${APP_BIND_PORT:-3000}:3000"
     read_only: true
     tmpfs:
       - /tmp
