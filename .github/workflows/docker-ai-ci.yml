@@ -1,15 +1,12 @@
 name: Docker AI deployment CI (WSL self-hosted)
 
 on:
-  push:
-    branches:
-      - feat/docker-domain-ai-agent
   pull_request:
     branches:
       - main
 
 concurrency:
-  group: snowgame-ci-${{ github.ref }}
+  group: snowgame-ci
   cancel-in-progress: true
 
 jobs:
