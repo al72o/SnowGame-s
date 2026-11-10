@@ -155,6 +155,34 @@ sudo bash scripts/live-ai-smoke.sh --full
 Без ключа остаётся резервный режим `stub`.
 Доступ к игре и `/api/agent` по-прежнему требует авторизации.
 
+## Тот же HTTPS-домен: `simcenter.partner.ru/snow/`
+
+Когда Nginx работает на Ubuntu, а действующий Docker-проект принимает
+запросы на `127.0.0.1:5000`, SnowGame может жить под `/snow/` на
+`127.0.0.1:3100` без нового DNS-имени и сертификата.
+
+Из отдельного checkout новой ветки:
+
+```bash
+sudo bash install.sh --existing-proxy --path-prefix /snow --port 3100
+```
+
+Установщик **не редактирует** существующий Nginx. В действующий HTTPS
+`server { listen 443 ssl http2; ... }` добавляются ровно три location
+из [`deploy/nginx-snow-path.conf.example`](deploy/nginx-snow-path.conf.example).
+Полный пример, адаптированный к переданному конфигу simcenter.partner.ru:
+[`deploy/nginx-simcenter.conf.example`](deploy/nginx-simcenter.conf.example).
+
+Перед изменениями сделайте backup действующего конфигурационного файла.
+Только после `sudo nginx -t` выполните `sudo systemctl reload nginx`.
+Основной `/` остаётся на 5000, игра `/snow/` на 3100, а
+`/snow/api/agent` находится за той же авторизацией и не раскрывает ключ.
+
+Если существующий домен не разрешается из публичного интернета или
+порт 443 закрыт корпоративным firewall, проксирование по пути само
+по себе не создаёт внешнего доступа. Публикация внутреннего сервиса
+требует согласования с администратором сети.
+
 ## Docker + домен
 
 Production-подготовка находится в ветке `feat/docker-domain-ai-agent`.
