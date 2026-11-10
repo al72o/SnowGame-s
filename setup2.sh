@@ -131,6 +131,35 @@ if ! (cd "$INSTALL_DIR" && docker compose up -d --build --force-recreate app); t
   exit 1
 fi
 
+# Compose may return while the new container is still starting.
+APP_BIND_PORT="$(grep -E '^APP_BIND_PORT=[0-9]+
+  if ! (cd "$INSTALL_DIR" && bash scripts/live-ai-smoke.sh --project-dir "$INSTALL_DIR"); then
+    echo "Проверка не пройдена. Возможные причины: нет прав на модель или VPS не видит корпоративный шлюз." >&2
+    rollback
+    exit 1
+  fi
+else
+  echo "Live-проверка пропущена: --skip-test. Подключение к шлюзу не подтверждено."
+fi
+
+echo "Готово. SnowGame-s теперь использует qwen3.8-flash-next через DNS LiteLLM."
+echo "Домен, пароль пользователя и HTTPS не изменены."
+ "$ENV_FILE" | tail -1 | cut -d= -f2 || true)"
+APP_BIND_PORT="${APP_BIND_PORT:-3000}"
+HEALTHY=false
+for _ in {1..60}; do
+  if curl -fsS "http://127.0.0.1:${APP_BIND_PORT}/healthz" >/dev/null 2>&1; then
+    HEALTHY=true
+    break
+  fi
+  sleep 1
+done
+if ! $HEALTHY; then
+  echo "Игра не прошла healthcheck после перезапуска." >&2
+  rollback
+  exit 1
+fi
+
 if ! $SKIP_TEST; then
   echo "Проверяю модель на игровой роли поставщика..."
   if ! (cd "$INSTALL_DIR" && bash scripts/live-ai-smoke.sh --project-dir "$INSTALL_DIR"); then
