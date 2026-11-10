@@ -113,6 +113,76 @@ snezhinka-ai/
 `debrief_facts` и `debrief_analysis`.
 
 
+## DNS LiteLLM + Qwen (корпоративный шлюз)
+
+В production-ветке `feat/dns-litellm-qwen-setup2` агент поддерживает
+`AGENT_PROVIDER=litellm`. Все пять игровых задач используют проверенные
+промпты из `AGENT.md`, без изменения игровой экономики.
+
+Для **первой установки**:
+
+```bash
+sudo bash install.sh
+```
+
+Установщик скрыто запросит персональный ключ LiteLLM, настроит
+`https://litellm.dns-shop.ru/v1` и модель `qwen3.8-flash-next`.
+Нужна доступность корпоративного шлюза из сети, где работает сервер.
+Ключ никогда не вводится в веб-интерфейсе и не сохраняется в Git.
+
+Для **уже работающей игры** (сохранить домен, пароль и HTTPS):
+
+```bash
+sudo bash setup2.sh
+```
+
+Если установка в нестандартном каталоге:
+`sudo bash setup2.sh --install-dir /path/to/snowgame`.
+
+Скрипт заменяет только AI-настройки в `.env`, перезапускает контейнер,
+проверяет одну игровую задачу и при ошибке откатывает конфигурацию.
+Секрет хранится в `.env` с режимом `0600` (виден администраторам Docker/хоста).
+Если DNS LiteLLM недоступен с VPS, настройте разрешённый корпоративный сетевой
+доступ; не публикуйте шлюз и токен в открытом интернете.
+
+Проверка всех пяти ролей:
+
+```bash
+cd /opt/snowgame
+sudo bash scripts/live-ai-smoke.sh --full
+```
+
+Без ключа остаётся резервный режим `stub`.
+Доступ к игре и `/api/agent` по-прежнему требует авторизации.
+
+## Тот же HTTPS-домен: `simcenter.partner.ru/snow/`
+
+Когда Nginx работает на Ubuntu, а действующий Docker-проект принимает
+запросы на `127.0.0.1:5000`, SnowGame может жить под `/snow/` на
+`127.0.0.1:3100` без нового DNS-имени и сертификата.
+
+Из отдельного checkout новой ветки:
+
+```bash
+sudo bash install.sh --existing-proxy --path-prefix /snow --port 3100
+```
+
+Установщик **не редактирует** существующий Nginx. В действующий HTTPS
+`server { listen 443 ssl http2; ... }` добавляются ровно три location
+из [`deploy/nginx-snow-path.conf.example`](deploy/nginx-snow-path.conf.example).
+Полный пример, адаптированный к переданному конфигу simcenter.partner.ru:
+[`deploy/nginx-simcenter.conf.example`](deploy/nginx-simcenter.conf.example).
+
+Перед изменениями сделайте backup действующего конфигурационного файла.
+Только после `sudo nginx -t` выполните `sudo systemctl reload nginx`.
+Основной `/` остаётся на 5000, игра `/snow/` на 3100, а
+`/snow/api/agent` находится за той же авторизацией и не раскрывает ключ.
+
+Если существующий домен не разрешается из публичного интернета или
+порт 443 закрыт корпоративным firewall, проксирование по пути само
+по себе не создаёт внешнего доступа. Публикация внутреннего сервиса
+требует согласования с администратором сети.
+
 ## Docker + домен
 
 Production-подготовка находится в ветке `feat/docker-domain-ai-agent`.
@@ -120,7 +190,7 @@ Production-подготовка находится в ветке `feat/docker-do
 для AI endpoint и готовую конфигурацию для
 `https://ru.cheapvibecode.ru/v1` + `gpt-6-luna`.
 
-Автоматическая установка после checkout:
+Автоматическая установка после checkout (теперь DNS LiteLLM/Qwen по умолчанию):
 
 ```bash
 sudo bash install.sh

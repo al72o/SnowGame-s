@@ -23,7 +23,10 @@ const MODEL = process.env.OPENAI_MODEL || 'gpt-4o-mini';
 const API_KEY = process.env.OPENAI_API_KEY || '';
 const REQUEST_TIMEOUT_MS = Number.parseInt(process.env.OPENAI_REQUEST_TIMEOUT_MS || '45000', 10);
 const JSON_MODE = (process.env.OPENAI_JSON_MODE || 'auto').toLowerCase();
-const TEMPERATURE = Number.parseFloat(process.env.OPENAI_TEMPERATURE || '0.7');
+// Reasoning-oriented models may reject temperature. Use OPENAI_TEMPERATURE=omit to skip it.
+const TEMPERATURE = process.env.OPENAI_TEMPERATURE === 'omit'
+  ? null
+  : Number.parseFloat(process.env.OPENAI_TEMPERATURE || '0.7');
 
 async function requestChat(messages, { useResponseFormat = false } = {}) {
   const controller = new AbortController();
@@ -40,7 +43,7 @@ async function requestChat(messages, { useResponseFormat = false } = {}) {
       body: JSON.stringify({
         model: MODEL,
         messages,
-        temperature: Number.isFinite(TEMPERATURE) ? TEMPERATURE : 0.7,
+        ...(Number.isFinite(TEMPERATURE) ? { temperature: TEMPERATURE } : {}),
         ...(useResponseFormat ? { response_format: { type: 'json_object' } } : {}),
       }),
     });
@@ -57,7 +60,9 @@ async function requestChat(messages, { useResponseFormat = false } = {}) {
 async function readContent(res) {
   if (!res.ok) {
     const text = await res.text().catch(() => '');
-    throw new Error(`OpenAI-совместимый API ответил ${res.status}: ${text.slice(0, 300)}`);
+    // Never reflect the configured bearer token in diagnostic output.
+    const safeText = API_KEY ? text.split(API_KEY).join('[REDACTED]') : text;
+    throw new Error(`OpenAI-совместимый API ответил ${res.status}: ${safeText.slice(0, 300)}`);
   }
 
   const data = await res.json();

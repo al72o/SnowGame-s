@@ -1,0 +1,40 @@
+# Add these location blocks INSIDE the existing HTTPS server { }.
+# Do not create a second server { }, change listen 443, or replace certificates.
+# Existing application at / continues working unchanged.
+#
+# SnowGame docker-compose must publish 127.0.0.1:3100:3000 on this HOST.
+# PUBLIC_BASE_PATH=/snow must be set in the game's .env.
+#
+# IMPORTANT: this 127.0.0.1 target is valid only when Nginx runs ON THE HOST.
+# If the current Nginx is itself a Docker container, attach it and SnowGame
+# to an explicitly shared, private Docker network and instead use its
+# unique network alias as the upstream (see DEPLOY.md).
+
+location = /snow {
+    return 308 /snow/;
+}
+
+# Keep the internal container healthcheck private.
+location = /snow/healthz {
+    return 404;
+}
+
+location ^~ /snow/ {
+    client_max_body_size 512k;
+
+    # The trailing slash strips /snow/ before forwarding to Express:
+    # /snow/login -> /login; /snow/api/agent -> /api/agent
+    proxy_pass http://127.0.0.1:3100/;
+    proxy_http_version 1.1;
+
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_set_header X-Forwarded-Prefix /snow;
+
+    proxy_connect_timeout 5s;
+    proxy_send_timeout 110s;
+    proxy_read_timeout 110s;
+    proxy_redirect off;
+}

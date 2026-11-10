@@ -215,6 +215,16 @@ server/index.js  ──►  server/providers/index.js  ──►  server/provide
 
 ---
 
+## Корпоративный LiteLLM
+
+`AGENT_PROVIDER=litellm` использует тот же OpenAI-совместимый транспорт
+из `openai.js` и все пять прежних промптов. Параметры: `OPENAI_API_KEY`
+(персональный ключ LiteLLM), `OPENAI_BASE_URL`
+(`https://litellm.dns-shop.ru/v1`), `OPENAI_MODEL`
+(`qwen3.8-flash-next`). `OPENAI_TEMPERATURE=omit` исключает неподдерживаемый
+параметр для reasoning-моделей. `setup2.sh` меняет эту конфигурацию
+интерактивно после установки, не публикуя секреты в браузере.
+
 ## Как подключить другого провайдера
 
 1. Создайте `server/providers/<name>.js` с единственной обязательной
