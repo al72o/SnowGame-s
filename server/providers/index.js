@@ -5,7 +5,9 @@ const openai = require('./openai');
 const gigachat = require('./gigachat');
 const yandexgpt = require('./yandexgpt');
 
-const providers = { stub, openai, gigachat, yandexgpt };
+// LiteLLM uses the same Chat Completions transport and the five existing game prompts.
+// It is an explicit provider name so the active model is clearly visible in health checks.
+const providers = { stub, openai, litellm: openai, gigachat, yandexgpt };
 
 function activeName() {
   return process.env.AGENT_PROVIDER || 'stub';
