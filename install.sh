@@ -29,7 +29,7 @@ SnowGame-s production installer
   --auth-user USER        Логин игры (по умолчанию admin)
   --port PORT             Локальный порт приложения (по умолчанию 3000)
   --skip-certbot          Не получать HTTPS-сертификат автоматически
-  --skip-ai-test          Не выполнять live-запрос к gpt-6-luna после запуска
+  --skip-ai-test          Не выполнять live-запрос к активной AI-модели после запуска
   --skip-packages         Не устанавливать системные пакеты
   -h, --help              Показать справку
 
@@ -128,7 +128,7 @@ if [[ ${#AUTH_PASSWORD} -lt 12 ]]; then
 fi
 
 if [[ -z "$OPENAI_API_KEY" ]]; then
-  read -r -s -p "API key для https://ru.cheapvibecode.ru/v1: " OPENAI_API_KEY
+  read -r -s -p "Личный ключ LiteLLM DNS (ввод скрыт): " OPENAI_API_KEY
   echo
 fi
 
@@ -160,8 +160,8 @@ echo "Домен:       $DOMAIN"
 echo "Каталог:     $INSTALL_DIR"
 echo "Логин:       $AUTH_USERNAME"
 echo "Local port:  $APP_BIND_PORT"
-echo "AI endpoint: https://ru.cheapvibecode.ru/v1"
-echo "AI model:    gpt-6-luna"
+echo "AI endpoint: https://litellm.dns-shop.ru/v1"
+echo "AI model:    qwen3.8-flash-next"
 echo
 
 export DEBIAN_FRONTEND=noninteractive
@@ -244,14 +244,14 @@ AUTH_COOKIE_SECURE=true
 LOGIN_RATE_LIMIT_WINDOW_MS=900000
 LOGIN_RATE_LIMIT_MAX=10
 
-AGENT_PROVIDER=openai
+AGENT_PROVIDER=litellm
 
 OPENAI_API_KEY="$(dotenv_escape "$OPENAI_API_KEY")"
-OPENAI_MODEL=gpt-6-luna
-OPENAI_BASE_URL=https://ru.cheapvibecode.ru/v1
-OPENAI_REQUEST_TIMEOUT_MS=45000
+OPENAI_MODEL=qwen3.8-flash-next
+OPENAI_BASE_URL=https://litellm.dns-shop.ru/v1
+OPENAI_REQUEST_TIMEOUT_MS=90000
 OPENAI_JSON_MODE=auto
-OPENAI_TEMPERATURE=0.7
+OPENAI_TEMPERATURE=omit
 
 AGENT_RATE_LIMIT_WINDOW_MS=60000
 AGENT_RATE_LIMIT_MAX=60
@@ -324,7 +324,7 @@ else
 fi
 
 if ! $SKIP_AI_TEST; then
-  echo "==> Live smoke-test gpt-6-luna"
+  echo "==> Live smoke-test qwen3.8-flash-next"
   if ! APP_BIND_PORT="$APP_BIND_PORT" bash "$INSTALL_DIR/scripts/live-ai-smoke.sh" --project-dir "$INSTALL_DIR"; then
     echo "⚠️ Приложение запущено, но live AI smoke-test не прошёл." >&2
     echo "Смотри диагностику выше; установка Docker/Nginx сохранена." >&2
