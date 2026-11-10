@@ -1,3 +1,59 @@
+# Публикация на текущем домене simcenter.partner.ru/snow/
+
+**Проверенная схема по предоставленному конфигу:** Nginx отдельно на Ubuntu,
+существующий Docker-проект отвечает на `127.0.0.1:5000`. Новый SnowGame
+слушает только `127.0.0.1:3100`, Nginx добавляет локацию `/snow/`.
+Сертификаты `/etc/ssl/simcenter/simcenter.partner.crt` и
+`/etc/ssl/simcenter/simcenter.partner.key` не меняются.
+
+Полная эталонная конфигурация на основе текущего файла:
+[`deploy/nginx-simcenter.conf.example`](deploy/nginx-simcenter.conf.example).
+Безопаснее добавить **только три location** из
+[`deploy/nginx-snow-path.conf.example`](deploy/nginx-snow-path.conf.example)
+в уже работающий блок `server { listen 443 ssl http2; ... }`:
+`location = /snow`, `location = /snow/healthz`, `location ^~ /snow/`.
+Остальной конфиг, `map $http_upgrade`, порт 5000 и сертификаты не менять.
+
+## Шаги запуска (Ubuntu; код в отдельной папке)
+
+```bash
+git fetch origin
+git switch feat/dns-litellm-qwen-setup2
+sudo bash install.sh --existing-proxy --path-prefix /snow --port 3100
+```
+
+Установщик скрыто запросит логин/пароль игры и личный ключ LiteLLM DNS.
+Он **не меняет Nginx, DNS или сертификаты**, и не должен затронуть другой
+Docker-проект. Если в `/opt/snowgame` уже есть `.env`, он откажется
+перезаписывать установку. Для уже установленной «Снежинки» отдельно применить
+`PUBLIC_BASE_PATH=/snow` и `APP_BIND_PORT=3100` в её `.env`, затем
+`docker compose up -d --build --force-recreate app`.
+
+Перед изменением существующего Nginx обязательно сделать копию **его
+реального пути** (имя файла зависит от инсталляции), затем добавить
+три location, проверить и лишь после успешного теста перезагрузить конфиг:
+
+```bash
+sudo nginx -t
+sudo systemctl reload nginx
+curl -I https://simcenter.partner.ru/snow/
+```
+
+При `302 Location: /snow/login` это ожидаемое поведение закрытой игры.
+`/snow/healthz` должен возвращать 404; основной `/` должен по-прежнему
+обслуживаться старым приложением. После входа API вызывается как
+`/snow/api/agent`; cookies ограничены путём `/snow/`.
+Применять изменения лучше с открытой SSH-сессией и резервной копией
+конфига: при ошибке вернуть файл и `nginx -t && systemctl reload nginx`.
+
+**Важно:** доступность в *публичном интернете* не гарантируется одним
+Nginx: `simcenter.partner.ru` должен разрешаться и быть доступен по
+443 извне, а корпоративные политики должны позволять такую публикацию.
+Доступ к `litellm.dns-shop.ru` с VPS проверяется отдельно, и
+персональный ключ нельзя отдавать браузеру.
+
+---
+
 # DNS LiteLLM / Qwen 3.8 (актуальная интеграция)
 
 Для персонального корпоративного ключа используется:
