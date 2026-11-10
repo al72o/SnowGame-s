@@ -18,6 +18,13 @@ const app = express();
 const PORT = Number.parseInt(process.env.PORT || '3000', 10);
 const HOST = process.env.HOST || '0.0.0.0';
 const TRUST_PROXY_HOPS = Number.parseInt(process.env.TRUST_PROXY_HOPS || '1', 10);
+// External browser path. The reverse proxy strips this prefix when forwarding.
+// '' = domain root (backwards compatible), '/snow' = existing.domain/snow/.
+const PUBLIC_BASE_PATH = (process.env.PUBLIC_BASE_PATH || '').trim();
+if (PUBLIC_BASE_PATH && !/^\/[a-zA-Z0-9_-]+(?:\/[a-zA-Z0-9_-]+)*$/.test(PUBLIC_BASE_PATH)) {
+  throw new Error('PUBLIC_BASE_PATH должен выглядеть как /snow (без завершающего /)');
+}
+const publicPath = (suffix) => `${PUBLIC_BASE_PATH}${suffix}`;
 
 const AUTH_ENABLED = String(process.env.AUTH_ENABLED || 'true').toLowerCase() !== 'false';
 const AUTH_USERNAME = process.env.AUTH_USERNAME || 'admin';
@@ -153,7 +160,7 @@ function verifySession(token) {
 function sessionCookie(token, maxAgeSeconds) {
   const parts = [
     `snowgame_session=${encodeURIComponent(token)}`,
-    'Path=/',
+    `Path=${PUBLIC_BASE_PATH ? PUBLIC_BASE_PATH + '/' : '/'}`,
     'HttpOnly',
     'SameSite=Lax',
     `Max-Age=${maxAgeSeconds}`,
@@ -211,7 +218,7 @@ function loginPage(error = '') {
     <h1>Снежинка AI</h1>
     <p>Доступ к игре закрыт. Войдите, чтобы продолжить.</p>
     ${errorBlock}
-    <form method="post" action="/login" autocomplete="on">
+    <form method="post" action="${publicPath('/login')}" autocomplete="on">
       <label for="username">Логин</label>
       <input id="username" name="username" type="text" autocomplete="username" required autofocus>
       <label for="password">Пароль</label>
@@ -242,7 +249,7 @@ function requireAuth(req, res, next) {
     return res.status(401).json({ ok: false, error: 'Требуется авторизация' });
   }
 
-  return res.redirect(302, '/login');
+  return res.redirect(302, publicPath('/login'));
 }
 
 // Docker healthcheck. Host Nginx config deliberately blocks this path externally.
@@ -256,17 +263,17 @@ app.get('/healthz', (req, res) => {
 });
 
 app.get('/login', (req, res) => {
-  if (!AUTH_ENABLED) return res.redirect(302, '/');
+  if (!AUTH_ENABLED) return res.redirect(302, publicPath('/'));
 
   const token = parseCookies(req).snowgame_session;
-  if (verifySession(token)) return res.redirect(302, '/');
+  if (verifySession(token)) return res.redirect(302, publicPath('/'));
 
   res.setHeader('Cache-Control', 'no-store');
   res.type('html').send(loginPage());
 });
 
 app.post('/login', loginRateLimit, (req, res) => {
-  if (!AUTH_ENABLED) return res.redirect(302, '/');
+  if (!AUTH_ENABLED) return res.redirect(302, publicPath('/'));
 
   const username = String(req.body?.username || '');
   const password = String(req.body?.password || '');
@@ -283,12 +290,12 @@ app.post('/login', loginRateLimit, (req, res) => {
   const token = signSession(AUTH_USERNAME, expiresAt);
 
   res.setHeader('Set-Cookie', sessionCookie(token, ttlSeconds));
-  res.redirect(302, '/');
+  res.redirect(302, publicPath('/'));
 });
 
 app.post('/logout', requireAuth, (req, res) => {
   res.setHeader('Set-Cookie', sessionCookie('', 0));
-  res.redirect(302, '/login');
+  res.redirect(302, publicPath('/login'));
 });
 
 app.use(requireAuth);
@@ -325,6 +332,7 @@ app.use(express.static(path.join(__dirname, '..', 'web')));
 const server = app.listen(PORT, HOST, () => {
   console.log(`Снежинка AI слушает на http://${HOST}:${PORT}`);
   console.log(`Авторизация: ${AUTH_ENABLED ? 'включена' : 'выключена'}`);
+  console.log(`Публичный путь: ${PUBLIC_BASE_PATH || '/'}`);
   console.log(`Активный провайдер агента: ${activeName()}`);
   const info = activeInfo();
   if (info.model) console.log(`Модель: ${info.model}`);
