@@ -10,7 +10,9 @@ EMAIL="${EMAIL:-}"
 AUTH_USERNAME="${AUTH_USERNAME:-admin}"
 AUTH_PASSWORD="${AUTH_PASSWORD:-}"
 OPENAI_API_KEY="${OPENAI_API_KEY:-}"
-APP_BIND_PORT="${APP_BIND_PORT:-3000}"
+APP_BIND_PORT="${APP_BIND_PORT:-}"
+BEHIND_EXISTING_PROXY=false
+PUBLIC_BASE_PATH="${PUBLIC_BASE_PATH:-}"
 SKIP_CERTBOT=false
 SKIP_AI_TEST=false
 SKIP_PACKAGES=false
@@ -27,7 +29,9 @@ SnowGame-s production installer
   --email EMAIL           Email для Let's Encrypt / Certbot
   --install-dir PATH      Каталог установки (по умолчанию /opt/snowgame)
   --auth-user USER        Логин игры (по умолчанию admin)
-  --port PORT             Локальный порт приложения (по умолчанию 3000)
+  --port PORT             Локальный порт приложения (3000, или 3100 с --existing-proxy)
+  --existing-proxy        Уже есть домен/HTTPS и обратный прокси; НЕ менять его
+  --path-prefix PATH      Общий домен: /snow (требуется --existing-proxy)
   --skip-certbot          Не получать HTTPS-сертификат автоматически
   --skip-ai-test          Не выполнять live-запрос к активной AI-модели после запуска
   --skip-packages         Не устанавливать системные пакеты
@@ -63,6 +67,16 @@ while [[ $# -gt 0 ]]; do
       APP_BIND_PORT="${2:-}"
       shift 2
       ;;
+    --existing-proxy)
+      BEHIND_EXISTING_PROXY=true
+      SKIP_CERTBOT=true
+      SKIP_PACKAGES=true
+      shift
+      ;;
+    --path-prefix)
+      PUBLIC_BASE_PATH="${2:-}"
+      shift 2
+      ;;
     --skip-certbot)
       SKIP_CERTBOT=true
       shift
@@ -87,22 +101,48 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
+if [[ -z "$APP_BIND_PORT" ]]; then
+  if $BEHIND_EXISTING_PROXY; then APP_BIND_PORT=3100; else APP_BIND_PORT=3000; fi
+fi
+
+if $BEHIND_EXISTING_PROXY; then
+  if [[ "$PUBLIC_BASE_PATH" != "/snow" ]]; then
+    echo "--existing-proxy сейчас поддерживает только --path-prefix /snow" >&2
+    exit 1
+  fi
+elif [[ -n "$PUBLIC_BASE_PATH" ]]; then
+  echo "--path-prefix используйте с --existing-proxy" >&2
+  exit 1
+fi
+
 if [[ "${EUID}" -ne 0 ]]; then
   echo "Запусти установщик через sudo: sudo bash install.sh" >&2
   exit 1
 fi
 
-if [[ -z "$DOMAIN" ]]; then
-  read -r -p "Домен игры (например snowgame.example.com): " DOMAIN
-fi
-
-if [[ ! "$DOMAIN" =~ ^([A-Za-z0-9-]+\.)+[A-Za-z]{2,}$ ]]; then
-  echo "Некорректный домен: $DOMAIN" >&2
-  exit 1
+if ! $BEHIND_EXISTING_PROXY; then
+  if [[ -z "$DOMAIN" ]]; then
+    read -r -p "Домен игры (например snowgame.example.com): " DOMAIN
+  fi
+  if [[ ! "$DOMAIN" =~ ^([A-Za-z0-9-]+\.)+[A-Za-z]{2,}$ ]]; then
+    echo "Некорректный домен: $DOMAIN" >&2
+    exit 1
+  fi
 fi
 
 if [[ ! "$APP_BIND_PORT" =~ ^[0-9]+$ ]] || (( APP_BIND_PORT < 1024 || APP_BIND_PORT > 65535 )); then
   echo "Некорректный локальный порт: $APP_BIND_PORT" >&2
+  exit 1
+fi
+
+# Never overwrite an existing production installation without explicitly migrating it.
+if [[ -e "$INSTALL_DIR/.env" ]]; then
+  echo "В $INSTALL_DIR уже есть .env. Используйте setup2.sh для смены AI или отдельный каталог установки." >&2
+  exit 1
+fi
+
+if $BEHIND_EXISTING_PROXY && command -v ss >/dev/null 2>&1 && ss -H -ltn | awk '{print $4}' | grep -Eq "([.:])${APP_BIND_PORT}$"; then
+  echo "Порт $APP_BIND_PORT уже используется. Выберите --port с другим свободным портом." >&2
   exit 1
 fi
 
@@ -156,7 +196,9 @@ fi
 
 echo
 echo "=== SnowGame-s production install ==="
-echo "Домен:       $DOMAIN"
+echo "Домен:       ${DOMAIN:-существующий HTTPS-домен, маршрут /snow/}"
+echo "Режим:       $(if $BEHIND_EXISTING_PROXY; then echo 'существующий reverse proxy'; else echo 'отдельный домен'; fi)"
+echo "Путь:        ${PUBLIC_BASE_PATH:-/}"
 echo "Каталог:     $INSTALL_DIR"
 echo "Логин:       $AUTH_USERNAME"
 echo "Local port:  $APP_BIND_PORT"
@@ -185,7 +227,9 @@ if ! $SKIP_PACKAGES; then
   fi
 fi
 
-for cmd in curl openssl nginx docker tar; do
+REQUIRED_COMMANDS=(curl openssl docker tar)
+if ! $BEHIND_EXISTING_PROXY; then REQUIRED_COMMANDS+=(nginx); fi
+for cmd in "${REQUIRED_COMMANDS[@]}"; do
   if ! command -v "$cmd" >/dev/null 2>&1; then
     echo "Не найдена обязательная команда: $cmd" >&2
     exit 1
@@ -199,7 +243,9 @@ fi
 
 if command -v systemctl >/dev/null 2>&1; then
   systemctl enable --now docker >/dev/null 2>&1 || true
-  systemctl enable --now nginx >/dev/null 2>&1 || true
+  if ! $BEHIND_EXISTING_PROXY; then
+    systemctl enable --now nginx >/dev/null 2>&1 || true
+  fi
 fi
 
 echo "==> Копирование приложения в $INSTALL_DIR"
@@ -228,6 +274,7 @@ AUTH_SECRET="$(openssl rand -hex 32)"
 
 cat > "$INSTALL_DIR/.env" <<EOF
 DOMAIN="$(dotenv_escape "$DOMAIN")"
+PUBLIC_BASE_PATH=$PUBLIC_BASE_PATH
 
 HOST=0.0.0.0
 PORT=3000
@@ -282,45 +329,56 @@ if ! $healthy; then
   exit 1
 fi
 
-echo "==> Настройка host Nginx"
-NGINX_SITE="/etc/nginx/sites-available/snowgame.conf"
-NGINX_ENABLED="/etc/nginx/sites-enabled/snowgame.conf"
-
-if [[ -f "$NGINX_SITE" ]]; then
-  cp -a "$NGINX_SITE" "${NGINX_SITE}.bak.$(date +%Y%m%d-%H%M%S)"
-fi
-
-sed \
-  -e "s/server_name game\\.example\\.com;/server_name $DOMAIN;/" \
-  -e "s#proxy_pass http://127\\.0\\.0\\.1:3000;#proxy_pass http://127.0.0.1:${APP_BIND_PORT};#" \
-  "$INSTALL_DIR/deploy/nginx-snowgame.conf.example" > "$NGINX_SITE"
-
-ln -sfn "$NGINX_SITE" "$NGINX_ENABLED"
-nginx -t
-
-if command -v systemctl >/dev/null 2>&1; then
-  systemctl reload nginx
+if $BEHIND_EXISTING_PROXY; then
+  echo
+  echo "==> Уже существующий Nginx/Traefik/Caddy НЕ изменён."
+  echo "Добавьте маршрут /snow/ в текущий HTTPS-прокси."
+  echo "Шаблон для host Nginx: $INSTALL_DIR/deploy/nginx-snow-path.conf.example"
+  echo "Внутренний адрес игры: http://127.0.0.1:$APP_BIND_PORT"
+  TLS_OK=false
 else
-  nginx -s reload
-fi
-
-TLS_OK=false
-if ! $SKIP_CERTBOT; then
-  echo "==> Получение/обновление HTTPS-сертификата"
-  if certbot --nginx \
-      -d "$DOMAIN" \
-      --redirect \
-      --non-interactive \
-      --agree-tos \
-      --email "$EMAIL"; then
-    TLS_OK=true
-  else
-    echo "⚠️ Certbot не смог выпустить сертификат." >&2
-    echo "Проверь DNS домена и затем выполни:" >&2
-    echo "  sudo certbot --nginx -d $DOMAIN --redirect" >&2
+  echo "==> Настройка host Nginx"
+  NGINX_SITE="/etc/nginx/sites-available/snowgame.conf"
+  NGINX_ENABLED="/etc/nginx/sites-enabled/snowgame.conf"
+  
+  if [[ -f "$NGINX_SITE" ]]; then
+    cp -a "$NGINX_SITE" "${NGINX_SITE}.bak.$(date +%Y%m%d-%H%M%S)"
   fi
-else
-  echo "==> Certbot пропущен по --skip-certbot"
+  
+  sed \
+    -e "s/server_name game\\.example\\.com;/server_name $DOMAIN;/" \
+    -e "s#proxy_pass http://127\\.0\\.0\\.1:3000;#proxy_pass http://127.0.0.1:${APP_BIND_PORT};#" \
+    "$INSTALL_DIR/deploy/nginx-snowgame.conf.example" > "$NGINX_SITE"
+  
+  ln -sfn "$NGINX_SITE" "$NGINX_ENABLED"
+  nginx -t
+  
+  if command -v systemctl >/dev/null 2>&1; then
+    systemctl reload nginx
+  else
+    nginx -s reload
+  fi
+  
+  TLS_OK=false
+  if ! $SKIP_CERTBOT; then
+    echo "==> Получение/обновление HTTPS-сертификата"
+    if certbot --nginx \
+        -d "$DOMAIN" \
+        --redirect \
+        --non-interactive \
+        --agree-tos \
+        --email "$EMAIL"; then
+      TLS_OK=true
+    else
+      echo "⚠️ Certbot не смог выпустить сертификат." >&2
+      echo "Проверь DNS домена и затем выполни:" >&2
+      echo "  sudo certbot --nginx -d $DOMAIN --redirect" >&2
+    fi
+  else
+    echo "==> Certbot пропущен по --skip-certbot"
+  fi
+  
+  
 fi
 
 if ! $SKIP_AI_TEST; then
@@ -335,7 +393,10 @@ echo
 echo "✅ SnowGame-s установлен"
 echo "Каталог: $INSTALL_DIR"
 echo "Локальный healthcheck: http://127.0.0.1:${APP_BIND_PORT}/healthz"
-if $TLS_OK; then
+if $BEHIND_EXISTING_PROXY; then
+  echo "Интернет-доступ появится после добавления /snow/ в действующий HTTPS-прокси."
+  echo "Сертификаты и существующий сайт не изменены."
+elif $TLS_OK; then
   echo "Открыть: https://$DOMAIN"
 elif $SKIP_CERTBOT; then
   echo "HTTPS пропущен. Перед боевым использованием настрой сертификат для $DOMAIN."
