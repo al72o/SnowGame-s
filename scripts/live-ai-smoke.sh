@@ -66,7 +66,7 @@ fi
 echo "=== Real provider test: $TEST_MODE ==="
 
 docker compose exec -T -e SNOWGAME_TEST_MODE="$TEST_MODE" app node <<'NODE'
-const provider = require('./server/providers/openai');
+const { runTask, activeInfo } = require('./server/providers');
 
 function assert(condition, message) {
   if (!condition) throw new Error(message);
@@ -74,7 +74,7 @@ function assert(condition, message) {
 
 async function test(name, input, validate) {
   const started = Date.now();
-  const result = await provider.run(name, input);
+  const result = await runTask(name, input);
   validate(result);
   console.log(`✅ ${name} (${Date.now() - started} ms)`);
   console.log(JSON.stringify(result, null, 2));
@@ -82,10 +82,10 @@ async function test(name, input, validate) {
 }
 
 (async () => {
-  const info = provider.info();
+  const info = activeInfo();
 
   console.log(JSON.stringify({
-    provider: 'openai',
+    provider: info.provider,
     model: info.model,
     baseUrl: info.baseUrl,
     configured: info.configured,
@@ -93,12 +93,9 @@ async function test(name, input, validate) {
     jsonMode: info.jsonMode,
   }, null, 2));
 
-  assert(info.configured, 'OPENAI_API_KEY не настроен внутри контейнера');
-  assert(info.model === 'gpt-6-luna', `Ожидалась модель gpt-6-luna, получено: ${info.model}`);
-  assert(
-    info.baseUrl === 'https://ru.cheapvibecode.ru/v1',
-    `Неожиданный OPENAI_BASE_URL: ${info.baseUrl}`
-  );
+  assert(info.configured, `API-ключ провайдера ${info.provider} не настроен внутри контейнера`);
+  assert(typeof info.model === 'string' && info.model, 'Модель не настроена');
+  assert(/^https:\/\//.test(info.baseUrl), 'AI API требует HTTPS baseUrl');
 
   await test(
     'supplier_negotiate',
